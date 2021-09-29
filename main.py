@@ -9,26 +9,21 @@ from omegaconf import DictConfig, OmegaConf
 def go(config: DictConfig):
 
     # Setup the wandb experiment. All runs will be grouped under this name
-    os.environ["WANDB_PROJECT"] = config["main"]["project_name"] #Projekt setzen, nehmen Wert von config File
+    os.environ["WANDB_PROJECT"] = config["main"]["project_name"]
     os.environ["WANDB_RUN_GROUP"] = config["main"]["experiment_name"]
 
     # You can get the path at the root of the MLflow project with this:
-    root_path = hydra.utils.get_original_cwd() #Pfad der Pipeline von Hydra bekommen
+    root_path = hydra.utils.get_original_cwd()
 
     # Check which steps we need to execute
-    """Das ist ein Trick um nur bestimmte Schritte auszuführen.
-    Bei default settings, läuft die Pipeline alles durch. Wenn man aber
-    die execute_steps parameter in der Kommandozeile spezifiziert, kann man
-    auswählen, welche Schritte der Pipeline man laufen lassen will."""
     if isinstance(config["main"]["execute_steps"], str):
         # This was passed on the command line as a comma-separated list of steps
         steps_to_execute = config["main"]["execute_steps"].split(",")
     else:
-        assert isinstance(config["main"]["execute_steps"], list)
-        steps_to_execute = config["main"]["execute_steps"]
 
-    # Download step: Man beachte das oben kommentierte. Wenn das in der spezifizierten Liste ist, soll dieser Schritt ausgeführt werden.
-    # Wenn das nicht spezifiziert ist, dann wird das auch nicht durchlaufen
+        steps_to_execute = list(config["main"]["execute_steps"])
+
+    # Download step
     if "download" in steps_to_execute:
 
         _ = mlflow.run(
@@ -46,30 +41,31 @@ def go(config: DictConfig):
         _ = mlflow.run(
             os.path.join(root_path, "preprocess"),
             "main",
-            parameters = {
+            parameters={
                 "input_artifact": "raw_data.parquet:latest",
                 "artifact_name": "preprocessed_data.csv",
                 "artifact_type": "preprocessed_data",
                 "artifact_description": "Data with preprocessing applied"
             },
         )
-    # hier geschieht die Datenvalidierung
+
     if "check_data" in steps_to_execute:
         _ = mlflow.run(
             os.path.join(root_path, "check_data"),
             "main",
-            parameters = {
+            parameters={
                 "reference_artifact": config["data"]["reference_dataset"],
                 "sample_artifact": "preprocessed_data.csv:latest",
                 "ks_alpha": config["data"]["ks_alpha"]
             },
         )
-    # Hier wird train_test_split durchgeführt
+
     if "segregate" in steps_to_execute:
+
         _ = mlflow.run(
             os.path.join(root_path, "segregate"),
             "main",
-            parameters = {
+            parameters={
                 "input_artifact": "preprocessed_data.csv:latest",
                 "artifact_root": "data",
                 "artifact_type": "segregated_data",
@@ -77,9 +73,8 @@ def go(config: DictConfig):
                 "stratify": config["data"]["stratify"]
             },
         )
-    # Training und Validierung
-    if "random_forest" in steps_to_execute:
 
+    if "random_forest" in steps_to_execute:
         # Serialize decision tree configuration
         model_config = os.path.abspath("random_forest_config.yml")
 
@@ -89,7 +84,7 @@ def go(config: DictConfig):
         _ = mlflow.run(
             os.path.join(root_path, "random_forest"),
             "main",
-            parameters = {
+            parameters={
                 "train_data": "data_train.csv:latest",
                 "model_config": model_config,
                 "export_artifact": config["random_forest_pipeline"]["export_artifact"],
@@ -98,13 +93,13 @@ def go(config: DictConfig):
                 "stratify": config["data"]["stratify"]
             },
         )
-        
 
     if "evaluate" in steps_to_execute:
+
         _ = mlflow.run(
             os.path.join(root_path, "evaluate"),
             "main",
-            parameters = {
+            parameters={
                 "model_export": f"{config['random_forest_pipeline']['export_artifact']}:latest",
                 "test_data": "data_test.csv:latest"
             },
